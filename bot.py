@@ -55,6 +55,7 @@ EXPECT_OPTIONS = {
     "exp_party": "Відірватись 🔥",
     "exp_meet": "Познайомитись 🤝",
     "exp_absurd": "Подивитись, що за абсурд 🌀",
+    "exp_chill": "Повтикати 🫠",
 }
 
 REMINDER_TEXT = (
@@ -166,7 +167,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Привіт! Це реєстрація на <b>ABSURD PARTY 917</b> 🌀\n"
         f"{EVENT_INFO}\n\n"
         "Займе 30 секунд.\n\n"
-        "Як тебе записати? Ім'я або нік, щоб ми впізнали тебе на вході.",
+        "Як тебе записати? Ім'я або нік.",
         parse_mode="HTML",
     )
     return NAME
