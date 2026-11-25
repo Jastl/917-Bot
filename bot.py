@@ -51,9 +51,9 @@ DB_PATH = os.environ.get("DB_PATH") or (
 
 TZ = ZoneInfo("Europe/Kyiv")
 # Коли надіслати нагадування (за київським часом). Формат: РРРР-ММ-ДД ГГ:ХХ
-REMIND_AT = os.environ.get("REMIND_AT", "2026-11-28 10:00")
+REMIND_AT = os.environ.get("REMIND_AT", "2026-11-27 10:00")
 
-EVENT_INFO = "28 листопада · 18:00 · 154 PUB (ТЦ «Мармелад»)"
+EVENT_INFO = "27 листопада · 18:00 · 154 PUB (ТЦ «Мармелад»)"
 
 EXPECT_OPTIONS = {
     "exp_party": "Відірватись 🔥",
