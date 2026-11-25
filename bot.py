@@ -43,7 +43,11 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 ADMIN_IDS = {
     int(x) for x in os.environ.get("ADMIN_IDS", "").replace(" ", "").split(",") if x
 }
-DB_PATH = os.environ.get("DB_PATH", "guests.db")
+# На Railway, якщо підключено Volume, база автоматично лежить на ньому
+_VOLUME = os.environ.get("RAILWAY_VOLUME_MOUNT_PATH")
+DB_PATH = os.environ.get("DB_PATH") or (
+    os.path.join(_VOLUME, "guests.db") if _VOLUME else "guests.db"
+)
 
 TZ = ZoneInfo("Europe/Kyiv")
 # Коли надіслати нагадування (за київським часом). Формат: РРРР-ММ-ДД ГГ:ХХ
@@ -402,6 +406,13 @@ async def remind_now(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ---------- Запуск ----------
 async def post_init(app: Application):
     db().close()  # створити/оновити таблицю
+    log.info("База: %s (гостей у ній: %s)", os.path.abspath(DB_PATH), len(all_guests()))
+    on_railway = any(k.startswith("RAILWAY_") for k in os.environ)
+    if on_railway and not _VOLUME:
+        log.warning("!!! Volume НЕ підключено: список гостей зітреться при перезапуску")
+    elif _VOLUME and not os.path.abspath(DB_PATH).startswith(os.path.abspath(_VOLUME)):
+        log.warning("!!! DB_PATH (%s) не на Volume (%s): список гостей зітреться при перезапуску",
+                    DB_PATH, _VOLUME)
     schedule_reminder(app)
 
 
