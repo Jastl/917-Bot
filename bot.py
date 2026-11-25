@@ -15,6 +15,7 @@
   /export       — список у CSV-файлі
   /remind_test  — надіслати нагадування тільки собі (перевірити, як виглядає)
   /remind_now   — надіслати нагадування всім зараз (якщо треба вручну)
+  /battle       — анонс батлу костюмів (спершу показує прев'ю, розсилає після підтвердження)
 """
 
 import asyncio
@@ -67,6 +68,16 @@ REMINDER_TEXT = (
     "<b>ABSURD PARTY 917</b>\n"
     f"{EVENT_INFO}\n\n"
     "Welcome drink чекає тих, хто в списку. Ти з нами?"
+)
+
+BATTLE_TEXT = (
+    "🎭 <b>БАТЛ НАЙАБСУРДНІШИХ КОСТЮМІВ</b>\n\n"
+    "На ABSURD PARTY 917 оголошуємо змагання, де виграє найдивніший.\n\n"
+    "Приходь у костюмі, який ніхто не зможе пояснити. Підійде все: "
+    "від картоплі в смокінгу до живої ілюстрації твого стану перед сесією.\n\n"
+    "🏆 Переможця чекає <b>секретний приз</b>. Що там, не скажемо навіть під тортурами.\n\n"
+    f"📍 {EVENT_INFO}\n"
+    "Чим абсурдніше, тим ближче до призу 🌀"
 )
 
 # Стани розмови
@@ -392,6 +403,58 @@ async def export(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_document(data)
 
 
+def guests_for_broadcast():
+    """Усі гості, крім тих, хто відповів «Не вийде»."""
+    with db() as conn:
+        return [r[0] for r in conn.execute(
+            "SELECT user_id FROM guests WHERE status IS NULL OR status != 'no'"
+        )]
+
+
+async def broadcast(bot, text, reply_markup=None):
+    sent = failed = 0
+    for user_id in guests_for_broadcast():
+        try:
+            await bot.send_message(user_id, text, parse_mode="HTML", reply_markup=reply_markup)
+            sent += 1
+        except Exception as e:
+            log.warning("Не вдалося надіслати %s: %s", user_id, e)
+            failed += 1
+        await asyncio.sleep(0.05)
+    return sent, failed
+
+
+BATTLE_CONFIRM_KB = InlineKeyboardMarkup([[
+    InlineKeyboardButton("✅ Розіслати всім", callback_data="battle_send"),
+    InlineKeyboardButton("✖️ Скасувати", callback_data="battle_cancel"),
+]])
+
+
+@admin_only
+async def battle(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    n = len(guests_for_broadcast())
+    await update.message.reply_text(BATTLE_TEXT, parse_mode="HTML")
+    await update.message.reply_text(
+        f"☝️ Так виглядатиме анонс. Розіслати {n} гостям?\n"
+        "(Ті, хто натиснув «Не вийде», його не отримають.)",
+        reply_markup=BATTLE_CONFIRM_KB,
+    )
+
+
+async def battle_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    if q.from_user.id not in ADMIN_IDS:
+        await q.answer()
+        return
+    await q.answer()
+    if q.data == "battle_cancel":
+        await q.edit_message_text("Розсилку скасовано.")
+        return
+    await q.edit_message_text("Розсилаю анонс батлу…")
+    sent, failed = await broadcast(context.bot, BATTLE_TEXT)
+    await q.edit_message_text(f"🎭 Анонс батлу розіслано: {sent}\nНе дійшло: {failed}")
+
+
 @admin_only
 async def remind_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(REMINDER_TEXT, parse_mode="HTML", reply_markup=RSVP_KB)
@@ -448,6 +511,8 @@ def main():
     app.add_handler(CommandHandler("export", export))
     app.add_handler(CommandHandler("remind_test", remind_test))
     app.add_handler(CommandHandler("remind_now", remind_now))
+    app.add_handler(CommandHandler("battle", battle))
+    app.add_handler(CallbackQueryHandler(battle_confirm, pattern=r"^battle_"))
 
     log.info("Бот запущено")
     app.run_polling()
@@ -455,3 +520,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+          
