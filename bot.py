@@ -16,6 +16,7 @@
   /remind_test  — надіслати нагадування тільки собі (перевірити, як виглядає)
   /remind_now   — надіслати нагадування всім зараз (якщо треба вручну)
   /battle       — анонс батлу костюмів (спершу показує прев'ю, розсилає після підтвердження)
+  /repost <посилання> — розіслати допис з каналу всім гостям (без «Переслано з…»)
 """
 
 import asyncio
@@ -23,6 +24,7 @@ import csv
 import io
 import logging
 import os
+import re
 import sqlite3
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -452,6 +454,85 @@ async def battle_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await q.edit_message_text(f"🎭 Анонс батлу розіслано: {sent}\nНе дійшло: {failed}")
 
 
+# ---------- Репост допису з каналу ----------
+LINK_RE = re.compile(
+    r"(?:https?://)?(?:t\.me|telegram\.me)/(?:(c)/(\d+)|([A-Za-z0-9_]{4,}))/(\d+)"
+)
+
+
+def parse_post_link(link: str):
+    """t.me/channel/123 -> ('@channel', 123); t.me/c/123456/78 -> (-100123456, 78)"""
+    m = LINK_RE.search(link)
+    if not m:
+        return None
+    is_private, private_id, username, msg_id = m.groups()
+    chat = int(f"-100{private_id}") if is_private else f"@{username}"
+    return chat, int(msg_id)
+
+
+async def broadcast_copy(bot, from_chat, message_id):
+    sent = failed = 0
+    for user_id in guests_for_broadcast():
+        try:
+            # copy_message надсилає допис як новий, без «Переслано з…»
+            await bot.copy_message(user_id, from_chat_id=from_chat, message_id=message_id)
+            sent += 1
+        except Exception as e:
+            log.warning("Репост не дійшов до %s: %s", user_id, e)
+            failed += 1
+        await asyncio.sleep(0.05)
+    return sent, failed
+
+
+@admin_only
+async def repost(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    parsed = parse_post_link(" ".join(context.args)) if context.args else None
+    if not parsed:
+        await update.message.reply_text(
+            "Надішли команду разом із посиланням на допис, наприклад:\n"
+            "/repost https://t.me/назва_каналу/123\n\n"
+            "Посилання: у каналі натисни на допис → «Копіювати посилання»."
+        )
+        return
+    chat, msg_id = parsed
+    # спершу показуємо адміну, заодно перевіряємо, що бот бачить допис
+    try:
+        await context.bot.copy_message(update.effective_chat.id, from_chat_id=chat, message_id=msg_id)
+    except Exception as e:
+        log.warning("Не вдалося скопіювати %s/%s: %s", chat, msg_id, e)
+        await update.message.reply_text(
+            "Не можу дістати цей допис 😕\n\n"
+            "Перевір, що:\n"
+            "• посилання правильне;\n"
+            "• бот доданий у канал адміністратором."
+        )
+        return
+    n = len(guests_for_broadcast())
+    await update.message.reply_text(
+        f"☝️ Так гості побачать допис (без «Переслано з…»). Розіслати {n} гостям?",
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("✅ Розіслати всім", callback_data=f"rp|{chat}|{msg_id}"),
+            InlineKeyboardButton("✖️ Скасувати", callback_data="rp|cancel"),
+        ]]),
+    )
+
+
+async def repost_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+    if q.from_user.id not in ADMIN_IDS:
+        return
+    parts = q.data.split("|")
+    if parts[1] == "cancel":
+        await q.edit_message_text("Репост скасовано.")
+        return
+    chat = parts[1] if parts[1].startswith("@") else int(parts[1])
+    msg_id = int(parts[2])
+    await q.edit_message_text("Розсилаю допис…")
+    sent, failed = await broadcast_copy(context.bot, chat, msg_id)
+    await q.edit_message_text(f"📣 Допис розіслано: {sent}\nНе дійшло: {failed}")
+
+
 @admin_only
 async def remind_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(REMINDER_TEXT, parse_mode="HTML", reply_markup=RSVP_KB)
@@ -478,42 +559,4 @@ async def post_init(app: Application):
 
 def main():
     if not BOT_TOKEN:
-        raise SystemExit("Вкажи BOT_TOKEN у змінних середовища (див. README).")
-
-    app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
-
-    conv = ConversationHandler(
-        entry_points=[CommandHandler("start", start)],
-        states={
-            NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, got_name)],
-            PEOPLE: [CallbackQueryHandler(got_people_button, pattern=r"^ppl_")],
-            PEOPLE_CUSTOM: [MessageHandler(filters.TEXT & ~filters.COMMAND, got_people_custom)],
-            EXPECT: [
-                CallbackQueryHandler(got_expect_button, pattern=r"^exp_"),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, got_expect_text),
-            ],
-        },
-        fallbacks=[
-            CommandHandler("cancel", cancel_registration),
-            CommandHandler("start", start),
-        ],
-        allow_reentry=True,
-    )
-
-    app.add_handler(conv)
-    app.add_handler(CallbackQueryHandler(rsvp, pattern=r"^rsvp_"))
-    app.add_handler(CommandHandler("cancel", cancel_registration))
-    app.add_handler(CommandHandler("count", count))
-    app.add_handler(CommandHandler("list", list_guests))
-    app.add_handler(CommandHandler("export", export))
-    app.add_handler(CommandHandler("remind_test", remind_test))
-    app.add_handler(CommandHandler("remind_now", remind_now))
-    app.add_handler(CommandHandler("battle", battle))
-    app.add_handler(CallbackQueryHandler(battle_confirm, pattern=r"^battle_"))
-
-    log.info("Бот запущено")
-    app.run_polling()
-
-
-if __name__ == "__main__":
-    main()
+     
