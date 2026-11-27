@@ -559,4 +559,44 @@ async def post_init(app: Application):
 
 def main():
     if not BOT_TOKEN:
-     
+        raise SystemExit("Вкажи BOT_TOKEN у змінних середовища (див. README).")
+
+    app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
+
+    conv = ConversationHandler(
+        entry_points=[CommandHandler("start", start)],
+        states={
+            NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, got_name)],
+            PEOPLE: [CallbackQueryHandler(got_people_button, pattern=r"^ppl_")],
+            PEOPLE_CUSTOM: [MessageHandler(filters.TEXT & ~filters.COMMAND, got_people_custom)],
+            EXPECT: [
+                CallbackQueryHandler(got_expect_button, pattern=r"^exp_"),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, got_expect_text),
+            ],
+        },
+        fallbacks=[
+            CommandHandler("cancel", cancel_registration),
+            CommandHandler("start", start),
+        ],
+        allow_reentry=True,
+    )
+
+    app.add_handler(conv)
+    app.add_handler(CallbackQueryHandler(rsvp, pattern=r"^rsvp_"))
+    app.add_handler(CommandHandler("cancel", cancel_registration))
+    app.add_handler(CommandHandler("count", count))
+    app.add_handler(CommandHandler("list", list_guests))
+    app.add_handler(CommandHandler("export", export))
+    app.add_handler(CommandHandler("remind_test", remind_test))
+    app.add_handler(CommandHandler("remind_now", remind_now))
+    app.add_handler(CommandHandler("battle", battle))
+    app.add_handler(CallbackQueryHandler(battle_confirm, pattern=r"^battle_"))
+    app.add_handler(CommandHandler("repost", repost))
+    app.add_handler(CallbackQueryHandler(repost_confirm, pattern=r"^rp\|"))
+
+    log.info("Бот запущено")
+    app.run_polling()
+
+
+if __name__ == "__main__":
+    main()
